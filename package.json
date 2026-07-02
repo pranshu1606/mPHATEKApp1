@@ -1,0 +1,26 @@
+{
+  "name": "rbac-oauth-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "dev:backend": "C:/Users/PRANSHU/AppData/Local/Programs/Python/Python310/python.exe -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:all": "node scripts/dev-all.mjs",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "next": "^15.3.3",
+    "next-auth": "^4.24.11",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pypdf
+langchain
+langchain-community
+langchain-google-genai
+langchain-text-splitters
+chromadb
+pydantic
+langchain-groq
+json-repair

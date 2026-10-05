@@ -1,21 +1,47 @@
-version: '3.8'
 services:
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - RESUME_VECTOR_STORE_PATH=/app/data/vectorstore
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app/backend
+      - vector-data:/app/data/vectorstore
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
+    env_file:
+      - path: .env
+        required: false
     environment:
       - NODE_ENV=production
+      - NEXTAUTH_URL=http://localhost:3000
+      - RESUME_BACKEND_URL=http://backend:8000
+      - DATABASE_PATH=/app/data/app.db
+      - RESUME_STORAGE_DIR=/app/data/resumes
+    ports:
+      - "3000:3000"
+    volumes:
+      - web-data:/app/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  web-data:
+  vector-data:

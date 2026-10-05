@@ -1,0 +1,37 @@
+# Production override — used on the VM together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Only Caddy is reachable from the internet; it accepts traffic only from CloudFront
+# (X-Origin-Verify header) and proxies to the frontend over the internal network.
+name: resume-portal
+
+services:
+  backend:
+    ports: !reset []
+
+  frontend:
+    ports: !reset []
+    environment:
+      - NEXTAUTH_URL=${PUBLIC_URL:?set PUBLIC_URL in .env (https://<id>.cloudfront.net)}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - ORIGIN_HOST=${ORIGIN_HOST:?set ORIGIN_HOST in .env (e.g. yourapp.duckdns.org)}
+      - ORIGIN_VERIFY_SECRET=${ORIGIN_VERIFY_SECRET:?set ORIGIN_VERIFY_SECRET in .env}
+      - ACME_EMAIL=${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:

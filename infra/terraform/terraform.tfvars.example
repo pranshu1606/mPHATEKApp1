@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+origin_domain        = "yourapp.duckdns.org"
+origin_verify_secret = "paste output of: openssl rand -hex 32"
+alert_email          = "you@example.com"
+
+# Optional
+# price_class               = "PriceClass_All"
+# geo_restriction_type      = "none"
+# geo_restriction_locations = []

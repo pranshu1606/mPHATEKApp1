@@ -1,0 +1,28 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Origin for CloudFront. Caddy obtains a Let's Encrypt certificate for ORIGIN_HOST
+# (HTTP-01 challenge on port 80 is handled automatically before these routes).
+{$ORIGIN_HOST} {
+	request_body {
+		max_size 10MB
+	}
+
+	# CloudFront injects this secret header on every origin request.
+	# Anything else (direct hits on the VM's IP/hostname) is rejected.
+	@cloudfront header X-Origin-Verify {$ORIGIN_VERIFY_SECRET}
+
+	handle @cloudfront {
+		reverse_proxy frontend:3000
+	}
+
+	handle {
+		respond "Forbidden" 403
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

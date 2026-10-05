@@ -1,0 +1,17 @@
+.git
+.next
+node_modules
+**/__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+data
+coverage
+*.log
+dist
+tsconfig.tsbuildinfo
+test-pdf.js
+test-pdf.mjs
+Dockerfile.*
+docker-compose.yml

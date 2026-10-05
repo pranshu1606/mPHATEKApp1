@@ -1,0 +1,132 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          DATABASE_PATH: /tmp/ci.db
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  backend:
+    name: Backend (install + import)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Import FastAPI app
+        run: python -c "from backend.main import app; print(app.title)"
+        env:
+          RESUME_VECTOR_STORE_PATH: /tmp/vectorstore
+
+  terraform:
+    name: Terraform (fmt + validate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production compose config
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+        env:
+          PUBLIC_URL: https://example.cloudfront.net
+          ORIGIN_HOST: example.duckdns.org
+          ORIGIN_VERIFY_SECRET: ci-placeholder
+          ACME_EMAIL: ci@example.com
+      - run: docker compose build
+
+  deploy:
+    name: Deploy to Oracle VM
+    needs: [frontend, backend, terraform, docker]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PUBLIC_URL }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_USER: ${{ secrets.VM_USER }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      ORIGIN_HOST: ${{ vars.ORIGIN_HOST }}
+    steps:
+      - name: Configure SSH
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_KNOWN_HOSTS: ${{ secrets.VM_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Pull, build and restart on the VM
+        run: |
+          ssh -o BatchMode=yes "$VM_USER@$VM_HOST" bash -s -- "$GITHUB_SHA" <<'EOF'
+          set -euo pipefail
+          cd ~/app
+          git fetch --prune origin main
+          git reset --hard "$1"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
+          docker image prune -f
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+          EOF
+
+      - name: Smoke test through CloudFront
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$PUBLIC_URL/login" || true)
+            [ "$code" = "200" ] && break
+            echo "attempt $i: HTTP $code"; sleep 10
+          done
+          [ "$code" = "200" ] || { echo "Site did not come up"; exit 1; }
+
+          echo "--- edge headers ---"
+          curl -sI "$PUBLIC_URL/login" | grep -iE '^(x-cache|x-amz-cf-pop|via|server-timing|strict-transport-security):'
+
+      - name: Verify origin rejects traffic that bypasses CloudFront
+        if: env.ORIGIN_HOST != ''
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://$ORIGIN_HOST/login")
+          echo "direct origin: HTTP $code"
+          [ "$code" = "403" ]

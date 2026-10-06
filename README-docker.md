@@ -1,15 +1,17 @@
 # Docker quickstart
 
-Build images with compose:
+Both services read secrets from `.env` (copy `.env.example` and fill it in first).
 
 ```bash
-docker-compose build
+docker compose up -d --build
 ```
 
-Start services:
+- Frontend: http://localhost:3000 (OAuth callback URLs must use `http://localhost:3000`)
+- Backend: http://localhost:8000 (the frontend reaches it internally at `http://backend:8000`)
 
-```bash
-docker-compose up -d
-```
+Data persists in named volumes, separate from your local `data/` folder:
 
-Frontend will be available at http://localhost:3000 and backend at http://localhost:8000
+- `web-data` — SQLite auth/app DB and uploaded resume PDFs (`/app/data` in the frontend)
+- `vector-data` — Chroma vector store (`/app/data/vectorstore` in the backend)
+
+`docker compose down` keeps the volumes; `docker compose down -v` wipes them.

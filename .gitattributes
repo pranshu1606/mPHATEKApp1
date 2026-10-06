@@ -1,0 +1,5 @@
+* text=auto
+*.sh text eol=lf
+infra/Caddyfile text eol=lf
+*.pdf binary
+*.tftpl text eol=lf

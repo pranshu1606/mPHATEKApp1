@@ -1,0 +1,40 @@
+# Production override — used on the VM together with the base file:
+#   bash infra/deploy.sh [sha]
+#   (= docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d --no-build)
+#
+# Images are built for arm64 by GitHub Actions and pulled from GHCR, so the small
+# VM never runs a build. Only Caddy is reachable from the internet; it accepts
+# traffic only from CloudFront (security group + X-Origin-Verify header).
+name: resume-portal
+
+services:
+  backend:
+    image: ${IMAGE_REGISTRY:-ghcr.io/pranshu1606}/resume-portal-backend:${IMAGE_TAG:-latest}
+    ports: !reset []
+
+  frontend:
+    image: ${IMAGE_REGISTRY:-ghcr.io/pranshu1606}/resume-portal-frontend:${IMAGE_TAG:-latest}
+    ports: !reset []
+    environment:
+      - NEXTAUTH_URL=${PUBLIC_URL:?set PUBLIC_URL in .env (https://<id>.cloudfront.net)}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - ORIGIN_HOST=${ORIGIN_HOST:?set ORIGIN_HOST in .env (e.g. yourapp.duckdns.org)}
+      - ORIGIN_VERIFY_SECRET=${ORIGIN_VERIFY_SECRET:?set ORIGIN_VERIFY_SECRET in .env}
+      - ACME_EMAIL=${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:

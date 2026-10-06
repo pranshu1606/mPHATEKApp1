@@ -1,5 +1,6 @@
 locals {
-  origin_id = "oracle-vm"
+  origin_id     = "ec2-origin"
+  origin_domain = "${var.duckdns_subdomain}.duckdns.org"
 }
 
 # ---------------------------------------------------------------------------
@@ -91,11 +92,11 @@ resource "aws_cloudfront_distribution" "app" {
   is_ipv6_enabled = true
   http_version    = "http2and3"
   price_class     = var.price_class
-  comment         = "${var.project} — Oracle VM origin"
+  comment         = "${var.project} — EC2 origin"
 
   origin {
     origin_id   = local.origin_id
-    domain_name = var.origin_domain
+    domain_name = local.origin_domain
 
     custom_origin_config {
       http_port                = 80
@@ -189,16 +190,20 @@ resource "aws_budgets_budget" "monthly" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
-  # Any real spend at all
+  # Measure gross usage (credits excluded) so alerts show how fast credits burn.
+  cost_types {
+    include_credit = false
+    include_refund = false
+  }
+
   notification {
     comparison_operator        = "GREATER_THAN"
-    threshold                  = 1
+    threshold                  = 80
     threshold_type             = "PERCENTAGE"
     notification_type          = "ACTUAL"
     subscriber_email_addresses = [var.alert_email]
   }
 
-  # Forecast to exceed the limit
   notification {
     comparison_operator        = "GREATER_THAN"
     threshold                  = 100

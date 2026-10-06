@@ -1,9 +1,11 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
-origin_domain        = "yourapp.duckdns.org"
+duckdns_subdomain    = "yourapp"
+duckdns_token        = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 origin_verify_secret = "paste output of: openssl rand -hex 32"
 alert_email          = "you@example.com"
 
 # Optional
-# price_class               = "PriceClass_All"
-# geo_restriction_type      = "none"
-# geo_restriction_locations = []
+# aws_region     = "ap-south-1"
+# instance_type  = "t4g.small"   # or t4g.micro to save credits
+# repo_ref       = "main"
+# price_class    = "PriceClass_All"

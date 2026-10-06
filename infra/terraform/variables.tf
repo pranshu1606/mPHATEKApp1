@@ -5,15 +5,49 @@ variable "project" {
 }
 
 variable "aws_region" {
-  description = "Region for the AWS provider (CloudFront control plane is us-east-1)."
+  description = "Region for the EC2 origin (ap-south-1 = Mumbai)."
   type        = string
-  default     = "us-east-1"
+  default     = "ap-south-1"
 }
 
-variable "origin_domain" {
-  description = "Public hostname of the origin VM (CloudFront does not accept raw IPs), e.g. yourapp.duckdns.org."
+# --- Origin VM ---------------------------------------------------------------
+
+variable "instance_type" {
+  description = "EC2 instance type. t4g.small (2 vCPU / 2 GB, Arm) fits the stack; t4g.micro (1 GB) is cheaper but tight."
+  type        = string
+  default     = "t4g.small"
+}
+
+variable "root_volume_gb" {
+  description = "Root EBS volume size (gp3)."
+  type        = number
+  default     = 20
+}
+
+variable "github_repo" {
+  description = "GitHub repository (owner/name) the VM clones and that is allowed to deploy via OIDC."
+  type        = string
+  default     = "pranshu1606/mPHATEKApp1"
+}
+
+variable "repo_ref" {
+  description = "Branch the VM checks out on first boot."
+  type        = string
+  default     = "main"
+}
+
+variable "duckdns_subdomain" {
+  description = "DuckDNS subdomain (the part before .duckdns.org) pointing at the VM."
   type        = string
 }
+
+variable "duckdns_token" {
+  description = "DuckDNS account token, used by the VM to keep its DNS record updated."
+  type        = string
+  sensitive   = true
+}
+
+# --- Edge ----------------------------------------------------------------------
 
 variable "origin_verify_secret" {
   description = "Shared secret sent as X-Origin-Verify to the origin; must match ORIGIN_VERIFY_SECRET on the VM."
@@ -50,10 +84,12 @@ variable "geo_restriction_locations" {
   default     = []
 }
 
+# --- Cost guardrail ------------------------------------------------------------
+
 variable "budget_limit_usd" {
-  description = "Monthly AWS budget; alerts fire on any actual spend and when forecast exceeds this."
+  description = "Expected monthly spend BEFORE credits. Alerts at 80% actual and 100% forecast so you can track credit burn."
   type        = string
-  default     = "1.0"
+  default     = "15"
 }
 
 variable "alert_email" {

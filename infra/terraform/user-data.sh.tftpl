@@ -1,0 +1,11 @@
+#!/bin/bash
+# EC2 first-boot script (rendered by Terraform). Clones the repo and runs the
+# regular VM bootstrap as the ubuntu user. Log: /var/log/cloud-init-output.log
+set -euo pipefail  # no -x: would log the DuckDNS token
+
+sudo -u ubuntu -H env \
+  DUCKDNS_SUBDOMAIN='${duckdns_subdomain}' \
+  DUCKDNS_TOKEN='${duckdns_token}' \
+  REPO_URL='${repo_url}' \
+  REPO_REF='${repo_ref}' \
+  bash -c 'git clone -b "$REPO_REF" "$REPO_URL" "$HOME/app" && bash "$HOME/app/infra/vm-setup.sh"'

@@ -13,6 +13,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/resume-portal
+
 jobs:
   frontend:
     name: Frontend (typecheck + build)
@@ -46,24 +49,18 @@ jobs:
         env:
           RESUME_VECTOR_STORE_PATH: /tmp/vectorstore
 
-  terraform:
-    name: Terraform (fmt + validate)
+  infra:
+    name: Infra (terraform + compose)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infra/terraform
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - run: terraform fmt -check -recursive
-      - run: terraform init -backend=false
-      - run: terraform validate
-
-  docker:
-    name: Docker images
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: terraform fmt / init / validate
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
       - name: Validate production compose config
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
         env:
@@ -71,13 +68,58 @@ jobs:
           ORIGIN_HOST: example.duckdns.org
           ORIGIN_VERIFY_SECRET: ci-placeholder
           ACME_EMAIL: ci@example.com
-      - run: docker compose build
+      - name: Shell script syntax
+        run: for f in infra/*.sh; do bash -n "$f"; done
+
+  images:
+    name: Image (${{ matrix.service }}, arm64)
+    # Native Arm runner: builds match the Graviton VM without QEMU emulation.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and push' || '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.service }}
+          platforms: linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy:
-    name: Deploy to Oracle VM
-    needs: [frontend, backend, terraform, docker]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    name: Deploy to EC2 (SSM)
+    needs: [frontend, backend, infra, images]
+    # Skips cleanly until the infrastructure exists and the repo variables are set.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      vars.EC2_INSTANCE_ID != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS — no stored AWS keys
     environment:
       name: production
       url: ${{ vars.PUBLIC_URL }}
@@ -85,32 +127,44 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     env:
-      VM_HOST: ${{ secrets.VM_HOST }}
-      VM_USER: ${{ secrets.VM_USER }}
+      INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
       PUBLIC_URL: ${{ vars.PUBLIC_URL }}
       ORIGIN_HOST: ${{ vars.ORIGIN_HOST }}
     steps:
-      - name: Configure SSH
-        env:
-          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-          VM_SSH_KNOWN_HOSTS: ${{ secrets.VM_SSH_KNOWN_HOSTS }}
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$VM_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Pull, build and restart on the VM
+      - name: Run deploy on the VM via SSM
         run: |
-          ssh -o BatchMode=yes "$VM_USER@$VM_HOST" bash -s -- "$GITHUB_SHA" <<'EOF'
-          set -euo pipefail
-          cd ~/app
-          git fetch --prune origin main
-          git reset --hard "$1"
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
-          docker image prune -f
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-          EOF
+          CMD="sudo -u ubuntu -H bash -c 'cd ~/app && git fetch --prune origin main && git reset --hard $GITHUB_SHA && bash infra/deploy.sh $GITHUB_SHA'"
+          jq -n --arg cmd "$CMD" '{commands: [$cmd], executionTimeout: ["1800"]}' > params.json
+
+          CID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${GITHUB_SHA::7}" \
+            --parameters file://params.json \
+            --query Command.CommandId --output text)
+          echo "SSM command: $CID"
+
+          STATUS=Pending
+          for i in $(seq 1 120); do
+            sleep 10
+            STATUS=$(aws ssm get-command-invocation --command-id "$CID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Pending|InProgress|Delayed) echo "… $STATUS";; *) break;; esac
+          done
+
+          echo "--- stdout ---"
+          aws ssm get-command-invocation --command-id "$CID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          echo "--- stderr ---"
+          aws ssm get-command-invocation --command-id "$CID" --instance-id "$INSTANCE_ID" \
+            --query StandardErrorContent --output text
+          echo "Final status: $STATUS"
+          [ "$STATUS" = "Success" ]
 
       - name: Smoke test through CloudFront
         run: |
@@ -124,9 +178,9 @@ jobs:
           echo "--- edge headers ---"
           curl -sI "$PUBLIC_URL/login" | grep -iE '^(x-cache|x-amz-cf-pop|via|server-timing|strict-transport-security):'
 
-      - name: Verify origin rejects traffic that bypasses CloudFront
+      - name: Verify the origin is unreachable except through CloudFront
         if: env.ORIGIN_HOST != ''
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' "https://$ORIGIN_HOST/login")
-          echo "direct origin: HTTP $code"
-          [ "$code" = "403" ]
+          code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "https://$ORIGIN_HOST/login" || true)
+          echo "direct origin: HTTP $code (000 = blocked by security group)"
+          [ "$code" != "200" ]

@@ -27,3 +27,6 @@ infra/terraform/.terraform.lock.hcl
 # Legacy
 prisma/dev.db
 prisma/dev.db-journal
+
+# Claude Code conversation exports
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt

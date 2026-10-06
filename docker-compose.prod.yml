@@ -1,15 +1,19 @@
 # Production override — used on the VM together with the base file:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   bash infra/deploy.sh [sha]
+#   (= docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d --no-build)
 #
-# Only Caddy is reachable from the internet; it accepts traffic only from CloudFront
-# (X-Origin-Verify header) and proxies to the frontend over the internal network.
+# Images are built for arm64 by GitHub Actions and pulled from GHCR, so the small
+# VM never runs a build. Only Caddy is reachable from the internet; it accepts
+# traffic only from CloudFront (security group + X-Origin-Verify header).
 name: resume-portal
 
 services:
   backend:
+    image: ${IMAGE_REGISTRY:-ghcr.io/pranshu1606}/resume-portal-backend:${IMAGE_TAG:-latest}
     ports: !reset []
 
   frontend:
+    image: ${IMAGE_REGISTRY:-ghcr.io/pranshu1606}/resume-portal-frontend:${IMAGE_TAG:-latest}
     ports: !reset []
     environment:
       - NEXTAUTH_URL=${PUBLIC_URL:?set PUBLIC_URL in .env (https://<id>.cloudfront.net)}
@@ -20,7 +24,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
     environment:
       - ORIGIN_HOST=${ORIGIN_HOST:?set ORIGIN_HOST in .env (e.g. yourapp.duckdns.org)}
       - ORIGIN_VERIFY_SECRET=${ORIGIN_VERIFY_SECRET:?set ORIGIN_VERIFY_SECRET in .env}

@@ -9,8 +9,8 @@ terraform {
   }
 }
 
-# CloudFront is a global service, but its API, CloudFront Functions and billing
-# metrics live in us-east-1.
+# EC2, IAM and S3 live in var.aws_region. CloudFront, CloudFront Functions and
+# Budgets are global services, so they work from any provider region.
 provider "aws" {
   region = var.aws_region
 
